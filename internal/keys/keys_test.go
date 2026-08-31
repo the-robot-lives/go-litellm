@@ -53,6 +53,12 @@ func TestMatchesFamily(t *testing.T) {
 	if !Matches("zai/opus", "zai/opus") {
 		t.Fatal("exact")
 	}
+	if Matches("zai-alt/haiku", "zai") {
+		t.Fatal("must not match zai-alt under zai")
+	}
+	if !Matches("zai-alt/haiku", "zai-alt") {
+		t.Fatal("zai-alt family")
+	}
 }
 
 func TestResolvePrefersNamedKey(t *testing.T) {
