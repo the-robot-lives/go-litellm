@@ -1,0 +1,21 @@
+# Example stage config for the GNP gnp-litellm deployment (search-v2 parse,
+# ADR-021). The canonical copy lives in helm/gnp-litellm/values.yaml
+# (litellm.config) — keep the two in sync when models change.
+#
+# Secrets: go-litellm resolves os.environ/… references at load time
+# (ResolveDeep), so no keys are written here. In k8s both env vars come from
+# the Infisical-managed secret (QWEN_API_KEY, LITELLM_MASTER_KEY).
+#
+# DashScope's compatible-mode endpoint speaks the OpenAI wire protocol, so
+# `openai/<model>` with an explicit api_base classifies as openai_compatible
+# and uses the generic compat adapter.
+
+model_list:
+  - model_name: qwen-flash
+    litellm_params:
+      model: openai/qwen-flash
+      api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/QWEN_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
