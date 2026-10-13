@@ -124,6 +124,11 @@ func TestProductionOpenRouterEntries(t *testing.T) {
 }
 
 func TestProductionZaiSubEntries(t *testing.T) {
+	// ValidateEnvironment checks litellm_params.api_key (an os.environ/ ref that
+	// hydrates empty without ambient keys) and falls back to ANTHROPIC_API_KEY.
+	// The suite must pass keyless: pin a dummy so the fallback resolves without
+	// ever requiring or using a live key.
+	t.Setenv("ANTHROPIC_API_KEY", "test-dummy-not-real")
 	cfg := prodConfig(t)
 	entries := entriesWhere(cfg, func(_, _, base string) bool {
 		return base == "https://api.z.ai/api/anthropic"
