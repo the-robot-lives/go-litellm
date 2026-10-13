@@ -53,6 +53,13 @@ func (a *App) forwardHeaders(r *http.Request, auth string) map[string]string {
 }
 
 func (a *App) forward(w http.ResponseWriter, r *http.Request, url string, headers map[string]string, body []byte) {
+	// Systemic crash fix: any route (seed rules or custom /front/rules) whose
+	// target resolves to this gateway would forward to itself forever. Refuse
+	// with the gateway's upstream-error shape instead of looping.
+	if a.isSelfTarget(url) {
+		a.refuseSelfForward(w, r)
+		return
+	}
 	streaming := strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 	if streaming {
 		a.streamForward(w, r, url, headers, body)
@@ -147,6 +154,17 @@ func (a *App) proxyError(w http.ResponseWriter, r *http.Request, err error) {
 	writeJSON(w, 502, map[string]any{
 		"type":  "error",
 		"error": map[string]any{"type": "api_error", "message": "upstream request failed: " + err.Error()},
+	})
+}
+
+// refuseSelfForward answers a resolved-to-self forward with the same 502
+// envelope proxyError uses, and never opens a socket to ourselves.
+func (a *App) refuseSelfForward(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[gateway] refusing self-forward: method=%s path=%s (route resolves to this gateway)", r.Method, r.URL.Path)
+	a.tag(r, "", "", "self-forward refused")
+	writeJSON(w, http.StatusBadGateway, map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "api_error", "message": "upstream request failed: route resolves to this gateway itself; refusing to forward"},
 	})
 }
 

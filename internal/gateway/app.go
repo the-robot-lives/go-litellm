@@ -82,9 +82,9 @@ func (a *App) ListenAndServe() error {
 	return srv.ListenAndServe()
 }
 
-// Handler wraps metrics + dispatch.
+// Handler wraps panic recovery + metrics + dispatch.
 func (a *App) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return a.withRecovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := &reqCtx{Start: time.Now()}
 		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, rc))
 		if r.Body != nil && r.ContentLength != 0 {
@@ -108,7 +108,7 @@ func (a *App) Handler() http.Handler {
 		ww := &countingWriter{ResponseWriter: w, status: 200}
 		a.ServeHTTP(ww, r)
 		a.logRequest(r, ww, rc)
-	})
+	}))
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +166,9 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodPost && p == "/v1/messages":
 		a.messages(w, r)
+	case audioRoute(p):
+		// Audio surface: never forward (self-loop crash); clean JSON error.
+		a.authed(w, r, a.audioUnsupported)
 	default:
 		a.passthrough(w, r)
 	}
