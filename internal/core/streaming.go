@@ -123,6 +123,15 @@ func runStream(w http.ResponseWriter, client HTTPDoer, p *Prepared, em emitter) 
 	url := p.Adapter.CompleteURL(p.Req)
 	payload := p.Adapter.TransformRequest(p.Req)
 	raw, _ := json.Marshal(payload)
+	// stream_timeout (else timeout) from litellm_params caps the stream like
+	// litellm's stream_timeout; unset falls back to the client's own timeout.
+	if st := streamTimeoutOf(p.Req.LiteLLMParams); st > 0 {
+		if hc, ok := client.(*http.Client); ok {
+			clone := *hc
+			clone.Timeout = st
+			client = &clone
+		}
+	}
 	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
 		return errx.New(502, "upstream stream failed: "+err.Error())
