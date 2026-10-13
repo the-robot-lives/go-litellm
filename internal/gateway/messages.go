@@ -18,6 +18,23 @@ func (a *App) messages(w http.ResponseWriter, r *http.Request) {
 	model := frontproxy.ExtractModel(body)
 	a.tag(r, model, "", "")
 
+	// Security: the LiteLLM surface of /v1/messages — any non-claude-* model —
+	// routes through deployments/native inference (frontproxy rule
+	// MatchMessagesNotModel → TargetLiteLLM/AuthMasterKey) and must require the
+	// master key exactly like /v1/chat/completions. a.authenticate no-ops when
+	// LITELLM_MASTER_KEY is unset, matching the existing conditional.
+	//
+	// claude-* stays AuthPassthrough — the client's own token is forwarded to
+	// api.anthropic.com verbatim. That is the front-proxy contract run-claude
+	// depends on: Claude Code arrives with its own OAuth credentials, never the
+	// master key, so requiring it here would 401 every local session.
+	if !strings.HasPrefix(model, "claude-") {
+		if e := a.authenticate(r); e != nil {
+			writeErr(w, e)
+			return
+		}
+	}
+
 	if strings.HasPrefix(model, "claude-") {
 		a.tag(r, "", frontproxy.AnthropicAPI, "")
 		a.forward(w, r, frontproxy.AnthropicAPI+r.URL.RequestURI(), a.forwardHeaders(r, frontproxy.AuthPassthrough), a.rawBody(r))
