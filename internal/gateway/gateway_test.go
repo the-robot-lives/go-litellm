@@ -41,12 +41,18 @@ func TestHealthAndBanner(t *testing.T) {
 		t.Fatalf("%q", b)
 	}
 
-	resp, _ = http.Get(ts.URL + "/health")
+	resp, err = http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatal(resp.Status)
 	}
-	resp, _ = http.Get(ts.URL + "/health/readiness")
+	resp, err = http.Get(ts.URL + "/health/readiness")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
