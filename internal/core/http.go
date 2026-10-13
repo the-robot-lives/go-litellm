@@ -40,6 +40,8 @@ func DoCompletion(client HTTPDoer, p *Prepared) (*providers.ModelResponse, *errx
 }
 
 // DoRaw POSTs and returns the decoded upstream JSON body.
+// Honors litellm_params.num_retries (default 2, litellm convention); retries
+// cover transport errors and 408/429/5xx responses with capped backoff.
 func DoRaw(client HTTPDoer, ad providers.Adapter, req *providers.Request) (map[string]any, *errx.Error) {
 	if client == nil {
 		client = DefaultClient
@@ -53,8 +55,12 @@ func DoRaw(client HTTPDoer, ad providers.Adapter, req *providers.Request) (map[s
 	raw, _ := json.Marshal(payload)
 
 	timeout := timeoutOf(req.LiteLLMParams, 10*time.Minute)
+	maxRetries := retriesOf(req.LiteLLMParams)
 	var last *errx.Error
-	for attempt := 0; attempt <= 2; attempt++ {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryBackoff(attempt))
+		}
 		httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
 		if err != nil {
 			return nil, errx.New(502, "upstream request failed: "+err.Error())
@@ -71,7 +77,7 @@ func DoRaw(client HTTPDoer, ad providers.Adapter, req *providers.Request) (map[s
 		}
 		resp, err := c.Do(httpReq)
 		if err != nil {
-			if attempt < 2 && retryable(err) {
+			if attempt < maxRetries && retryable(err) {
 				last = errx.New(502, "upstream request failed: "+err.Error())
 				continue
 			}
@@ -83,9 +89,50 @@ func DoRaw(client HTTPDoer, ad providers.Adapter, req *providers.Request) (map[s
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return decoded, nil
 		}
-		return nil, ad.ErrorClass(resp.StatusCode, decoded, nil)
+		last = ad.ErrorClass(resp.StatusCode, decoded, nil)
+		if attempt < maxRetries && retryableStatus(resp.StatusCode) {
+			continue
+		}
+		return nil, last
 	}
 	return nil, last
+}
+
+// retriesOf reads litellm_params.num_retries; default 2 (litellm convention),
+// clamped to [0, 8] so a wild config value can't pin a worker.
+func retriesOf(lp map[string]any) int {
+	n := 2
+	if lp != nil {
+		if v, ok := jsonx.Float(lp, "num_retries"); ok {
+			n = int(v)
+		}
+	}
+	if n < 0 {
+		n = 0
+	}
+	if n > 8 {
+		n = 8
+	}
+	return n
+}
+
+// retryableStatus mirrors litellm's retry posture: timeout, rate limit, and 5xx.
+func retryableStatus(code int) bool {
+	return code == http.StatusRequestTimeout ||
+		code == http.StatusTooManyRequests ||
+		code >= 500
+}
+
+// retryBackoff is a capped exponential: 500ms, 1s, 2s, 4s, 4s, …
+func retryBackoff(attempt int) time.Duration {
+	d := 500 * time.Millisecond
+	for i := 1; i < attempt && d < 4*time.Second; i++ {
+		d *= 2
+	}
+	if d > 4*time.Second {
+		d = 4 * time.Second
+	}
+	return d
 }
 
 func decodeBody(b []byte) map[string]any {
@@ -101,6 +148,15 @@ func timeoutOf(lp map[string]any, def time.Duration) time.Duration {
 		return time.Duration(n * float64(time.Second))
 	}
 	return def
+}
+
+// streamTimeoutOf prefers litellm_params.stream_timeout, then timeout; 0 means
+// "no override" (the caller's client timeout applies).
+func streamTimeoutOf(lp map[string]any) time.Duration {
+	if n, ok := jsonx.Float(lp, "stream_timeout"); ok {
+		return time.Duration(n * float64(time.Second))
+	}
+	return timeoutOf(lp, 0)
 }
 
 func retryable(err error) bool {

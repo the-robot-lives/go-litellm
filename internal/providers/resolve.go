@@ -17,6 +17,8 @@ var registry = map[string]Adapter{
 	"mistral":           Mistral,
 	"perplexity":        Perplexity,
 	"ollama":            Ollama,
+	"gemini":            Gemini,
+	"openrouter":        OpenRouter,
 	"openai_compatible": OpenAI,
 }
 
@@ -88,6 +90,10 @@ func endpointProvider(lp map[string]any) string {
 		return "anthropic"
 	case strings.Contains(base, "api.openai.com"):
 		return "openai"
+	case strings.Contains(base, "generativelanguage.googleapis.com"):
+		return "gemini"
+	case strings.Contains(base, "openrouter.ai"):
+		return "openrouter"
 	default:
 		return ""
 	}

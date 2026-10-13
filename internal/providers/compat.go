@@ -95,6 +95,11 @@ func (c *Compat) ValidateEnvironment(req *Request, headers map[string]string) (m
 		return nil, errx.New(401, "no API key found (checked litellm_params.api_key and "+env+")", errx.WithType("authentication_error"))
 	}
 	headers["authorization"] = "Bearer " + key
+	if extra := jsonx.Nested(req.LiteLLMParams, "extra_headers"); extra != nil {
+		for k, v := range extra {
+			headers[k] = stringify(v)
+		}
+	}
 	return headers, nil
 }
 
@@ -274,4 +279,10 @@ var (
 	Mistral    Adapter = newCompat("mistral", "https://api.mistral.ai/v1", "MISTRAL_API_KEY", nil, false)
 	Perplexity Adapter = newCompat("perplexity", "https://api.perplexity.ai", "PERPLEXITYAI_API_KEY", nil, false)
 	Ollama     Adapter = newCompat("ollama", "http://localhost:11434/v1", "", nil, true)
+	// Gemini routes to Google's OpenAI-compatible surface; per-entry api_base
+	// in litellm_params still wins (CompleteURL prefers it).
+	Gemini Adapter = newCompat("gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY", nil, false)
+	// OpenRouter is a plain OpenAI-compatible gateway at /api/v1; deployments
+	// in the production config carry no api_base and rely on this default.
+	OpenRouter Adapter = newCompat("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", nil, false)
 )

@@ -18,6 +18,23 @@ func (a *App) messages(w http.ResponseWriter, r *http.Request) {
 	model := frontproxy.ExtractModel(body)
 	a.tag(r, model, "", "")
 
+	// Security: the LiteLLM surface of /v1/messages — any non-claude-* model —
+	// routes through deployments/native inference (frontproxy rule
+	// MatchMessagesNotModel → TargetLiteLLM/AuthMasterKey) and must require the
+	// master key exactly like /v1/chat/completions. a.authenticate no-ops when
+	// LITELLM_MASTER_KEY is unset, matching the existing conditional.
+	//
+	// claude-* stays AuthPassthrough — the client's own token is forwarded to
+	// api.anthropic.com verbatim. That is the front-proxy contract run-claude
+	// depends on: Claude Code arrives with its own OAuth credentials, never the
+	// master key, so requiring it here would 401 every local session.
+	if !strings.HasPrefix(model, "claude-") {
+		if e := a.authenticate(r); e != nil {
+			writeErr(w, e)
+			return
+		}
+	}
+
 	if strings.HasPrefix(model, "claude-") {
 		a.tag(r, "", frontproxy.AnthropicAPI, "")
 		a.forward(w, r, frontproxy.AnthropicAPI+r.URL.RequestURI(), a.forwardHeaders(r, frontproxy.AuthPassthrough), a.rawBody(r))
@@ -57,12 +74,49 @@ func (a *App) messagesViaDeployment(w http.ResponseWriter, r *http.Request, body
 	url := res.Adapter.CompleteURL(req)
 	out := jsonx.Clone(body)
 	out["model"] = res.Model
-	if providers.ZaiThinkingApplies(lp) {
+	zai := providers.ZaiThinkingApplies(lp)
+	wafer := providers.WaferThinkingApplies(lp)
+	if zai {
 		out = providers.ApplyZaiThinking(out, res.Model)
+	}
+	if wafer {
+		// Clone lp: ApplyWaferThinking consumes default_reasoning_effort and
+		// must not mutate the router's stored deployment map.
+		out = providers.ApplyWaferThinking(out, res.Model, jsonx.Clone(lp))
+	}
+	pre := jsonx.Clone(out)
+	stripAdditionalDropParams(out, lp)
+	if (zai || wafer) && lp["reasoning_effort"] == nil {
+		// Same contract as core.Prepare: z.ai/wafer keep the (already mapped)
+		// effort even though additional_drop_params lists it — the entry is
+		// there to strip raw client values, not the normalized one.
+		if v, ok := pre["reasoning_effort"]; ok && v != nil {
+			out["reasoning_effort"] = v
+		}
 	}
 	raw, _ := json.Marshal(out)
 	a.tag(r, "", url, "")
 	a.forwardTo(w, r, url, headers, raw)
+}
+
+// stripAdditionalDropParams removes litellm_params.additional_drop_params keys
+// from an upstream body (config form: ["context_management", "thinking", …]).
+func stripAdditionalDropParams(body, lp map[string]any) {
+	if body == nil || lp == nil {
+		return
+	}
+	switch drop := lp["additional_drop_params"].(type) {
+	case []any:
+		for _, d := range drop {
+			if s, ok := d.(string); ok {
+				delete(body, s)
+			}
+		}
+	case []string:
+		for _, s := range drop {
+			delete(body, s)
+		}
+	}
 }
 
 func (a *App) openaiFamilyTranslate(w http.ResponseWriter, r *http.Request, body map[string]any) {
