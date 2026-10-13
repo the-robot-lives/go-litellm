@@ -53,6 +53,8 @@ func TestMessagesStripsAdditionalDropParams(t *testing.T) {
 	}`
 	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	// Deliberate update (security fix): deployment-path /v1/messages authenticates.
+	req.Header.Set("Authorization", "Bearer sk")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +112,8 @@ func TestMessagesStripKeepsDeploymentEffortPin(t *testing.T) {
 	}`
 	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	// Deliberate update (security fix): deployment-path /v1/messages authenticates.
+	req.Header.Set("Authorization", "Bearer sk")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

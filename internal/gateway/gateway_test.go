@@ -194,9 +194,12 @@ func TestMessagesClaudePassthrough(t *testing.T) {
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
 
+	// Deliberate update (security fix): non-claude-* /v1/messages requests now
+	// require the master key, so this deployment-path test authenticates.
 	body := `{"model":"glm","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`
 	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -256,6 +259,8 @@ func TestKeysSwitchChangesUpstreamAuth(t *testing.T) {
 		body := `{"model":"` + model + `","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`
 		req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		// Deliberate update (security fix): the deployment path now authenticates.
+		req.Header.Set("Authorization", "Bearer sk")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
