@@ -85,6 +85,13 @@ func (a *App) ListenAndServe() error {
 // Handler wraps panic recovery + metrics + dispatch.
 func (a *App) Handler() http.Handler {
 	return a.withRecovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// WebSocket upgrades bypass the body pre-read + countingWriter — the
+		// raw ResponseWriter must satisfy http.Hijacker for the realtime
+		// bridge. Dispatch lands in ServeHTTP's realtime case (auth included).
+		if isRealtimeUpgrade(r) {
+			a.ServeHTTP(w, r)
+			return
+		}
 		rc := &reqCtx{Start: time.Now()}
 		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, rc))
 		if r.Body != nil && r.ContentLength != 0 {
@@ -163,6 +170,12 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.browserGated(w, r, a.statusHTML)
 	case r.Method == http.MethodGet && p == "/status/requests":
 		a.browserGated(w, r, a.statusRequests)
+
+	case r.Method == http.MethodGet && realtimePath(p):
+		// Realtime voice bridge (DashScope session protocol). Upgrades are
+		// dispatched here raw from Handler(); non-upgrade GETs fall through
+		// to auth + handler, which answer plain JSON errors.
+		a.authed(w, r, a.realtime)
 
 	case r.Method == http.MethodPost && p == "/v1/messages":
 		a.messages(w, r)
