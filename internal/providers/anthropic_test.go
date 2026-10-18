@@ -114,3 +114,81 @@ func TestAnthropicChunkParser(t *testing.T) {
 		t.Fatal("expected done")
 	}
 }
+
+func TestAnthropicChunkParserToolUseListShape(t *testing.T) {
+	// content_block_start tool_use must surface as the OpenAI delta.tool_calls
+	// LIST shape with tool identity (id + name + empty arguments) intact.
+	c := Anthropic.ChunkParser(map[string]any{
+		"type":          "content_block_start",
+		"index":         0,
+		"content_block": map[string]any{"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": map[string]any{}},
+	})
+	tcs, ok := c.ToolUse.([]any)
+	if !ok || len(tcs) != 1 {
+		t.Fatalf("tool_use start not a list: %T %v", c.ToolUse, c.ToolUse)
+	}
+	tc := tcs[0].(map[string]any)
+	if tc["id"] != "toolu_01" || tc["type"] != "function" || tc["index"] != 0 {
+		t.Fatalf("tool identity lost: %+v", tc)
+	}
+	fn := tc["function"].(map[string]any)
+	if fn["name"] != "get_weather" || fn["arguments"] != "" {
+		t.Fatalf("function frame: %+v", fn)
+	}
+	if c.Index != 0 {
+		t.Fatalf("chunk index=%d", c.Index)
+	}
+
+	// Non-tool block opens emit no synthesized chunk content.
+	c = Anthropic.ChunkParser(map[string]any{
+		"type":          "content_block_start",
+		"index":         0,
+		"content_block": map[string]any{"type": "text", "text": ""},
+	})
+	if c.ToolUse != nil || c.Text != "" || c.Raw == nil {
+		t.Fatalf("text block open synthesized content: %+v", c)
+	}
+
+	// input_json_delta streams argument fragments under the same index,
+	// without re-sending identity.
+	c = Anthropic.ChunkParser(map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{"type": "input_json_delta", "partial_json": `{"city":"SF"`},
+	})
+	tcs, ok = c.ToolUse.([]any)
+	if !ok || len(tcs) != 1 {
+		t.Fatalf("input_json_delta not a list: %T %v", c.ToolUse, c.ToolUse)
+	}
+	tc = tcs[0].(map[string]any)
+	if _, hasID := tc["id"]; hasID {
+		t.Fatalf("argument delta must not carry id: %+v", tc)
+	}
+	if tc["index"] != 0 {
+		t.Fatalf("argument delta index: %+v", tc)
+	}
+	fn = tc["function"].(map[string]any)
+	if fn["arguments"] != `{"city":"SF"` {
+		t.Fatalf("arguments: %+v", fn)
+	}
+
+	// thinking_delta → Reasoning.
+	c = Anthropic.ChunkParser(map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{"type": "thinking_delta", "thinking": "hmm"},
+	})
+	if c.Reasoning != "hmm" || c.Text != "" {
+		t.Fatalf("thinking delta: %+v", c)
+	}
+
+	// message_delta stop_reason tool_use maps to finish_reason tool_calls.
+	c = Anthropic.ChunkParser(map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": "tool_use"},
+		"usage": map[string]any{"input_tokens": 2, "output_tokens": 5},
+	})
+	if !c.IsFinished || c.FinishReason != "tool_calls" {
+		t.Fatalf("finish: %+v", c)
+	}
+}

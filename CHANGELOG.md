@@ -2,6 +2,9 @@
 
 Dated work log, newest first. One line per landed change, extended in place as it progresses (`→ stage`, `→ main`).
 
+## 2026-10-19
+- fix(providers): anthropic upstream stream tool-use lost id/name — ChunkParser emits delta.tool_calls list shape
+
 ## 2026-10-18
 - feat(gateway): realtime voice bridge — GET /v1/realtime (alias /realtime) upgrades to a Go WebSocket pump translating WebUI/OpenAI-Realtime sessions onto the DashScope session protocol (Alibaba MaaS omni realtime models, wss://<host>/api-ws/v1/realtime?model=…): synthesized session.created-first handshake, WebUI session normalization (audio/pcm→pcm + rate→sample_rate + sample_format/channels, output_modalities→modalities, voice hoist, legacy/new-style format mutual exclusion), response.audio*/audio_transcript*/text* → response.output_* rename map, defensive response_id/item_id/content_index injection, tools/tool_choice + input_audio_transcription relayed (upstream accepts), bridge.ping/pong, session.finish on client close, per-connection metadata-only log line; model allowlist (-realtime suffix + REALTIME_ALLOWLIST env), lazy upstream dial on first frame, 1 MiB read limit; env-gated live e2e (GO_LITELLM_REALTIME_E2E=1) proves bad-key 401, session.updated, renamed audio deltas, response.done with usage (#9 → stage #10 → main #11; image sha-59212a2)
 
