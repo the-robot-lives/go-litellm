@@ -169,6 +169,146 @@ func TestChatCompletionsViaFakeUpstream(t *testing.T) {
 	}
 }
 
+func TestDashScopeChatViaFakeUpstream(t *testing.T) {
+	// Native DashScope outbound path: the upstream sees the generation endpoint,
+	// {model, input, parameters} body (result_format forced), Bearer auth, and
+	// x-dashscope-sse: enable iff streaming; the client always sees OpenAI shape.
+	var mu struct {
+		path, sse, auth string
+		body            map[string]any
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.path = r.URL.Path
+		mu.sse = r.Header.Get("X-DashScope-SSE")
+		mu.auth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		mu.body = body
+		params, _ := body["parameters"].(map[string]any)
+		if params != nil && params["incremental_output"] == true {
+			w.Header().Set("Content-Type", "text/event-stream")
+			// Frame 1 replays the prompt history (role-carrying) — the adapter
+			// must drop it; frames 2+ are incremental deltas, frame 4 finalizes.
+			_, _ = io.WriteString(w, "id:1\nevent:result\n:HTTP_STATUS/200\n"+
+				`data:{"output":{"choices":[{"message":{"role":"user","content":"hi"}}]},"request_id":"req-s","usage":{"input_tokens":3,"output_tokens":0,"total_tokens":3}}`+"\n\n")
+			_, _ = io.WriteString(w, "id:2\nevent:result\n:HTTP_STATUS/200\n"+
+				`data:{"output":{"choices":[{"message":{"content":"he"}}]},"request_id":"req-s","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}`+"\n\n")
+			_, _ = io.WriteString(w, "id:3\nevent:result\n:HTTP_STATUS/200\n"+
+				`data:{"output":{"choices":[{"message":{"content":"llo"}}]},"request_id":"req-s","usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`+"\n\n")
+			_, _ = io.WriteString(w, "id:4\nevent:result\n:HTTP_STATUS/200\n"+
+				`data:{"output":{"choices":[{"finish_reason":"stop","message":{"content":""}}],"finish_reason":"stop"},"request_id":"req-s","usage":{"input_tokens":3,"output_tokens":3,"total_tokens":6}}`+"\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"request_id":"req-1","model":"qwen-max","output":{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"pong"}}],"finish_reason":"stop"},"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`))
+	}))
+	defer up.Close()
+
+	app := testApp(t, "sk")
+	app.Router.Add(map[string]any{
+		"model_name": "dashscope-fake",
+		"litellm_params": map[string]any{
+			"model":    "dashscope/qwen-max",
+			"api_base": up.URL,
+			"api_key":  "k",
+		},
+	})
+	ts := httptest.NewServer(app.Handler())
+	defer ts.Close()
+
+	post := func(body string) string {
+		t.Helper()
+		req, err := http.NewRequest("POST", ts.URL+"/v1/chat/completions", bytes.NewReader([]byte(body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer sk")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			t.Fatalf("%d %s", resp.StatusCode, raw)
+		}
+		return string(raw)
+	}
+
+	// Non-stream: native path + OpenAI-shaped answer.
+	raw := post(`{"model":"dashscope-fake","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`)
+	if mu.path != "/api/v1/services/aigc/text-generation/generation" {
+		t.Fatalf("upstream path=%s", mu.path)
+	}
+	if mu.auth != "Bearer k" {
+		t.Fatalf("upstream auth=%q", mu.auth)
+	}
+	if mu.sse != "" {
+		t.Fatalf("x-dashscope-sse set on non-stream: %q", mu.sse)
+	}
+	if mu.body["model"] != "qwen-max" {
+		t.Fatalf("upstream model=%v", mu.body["model"])
+	}
+	input, _ := mu.body["input"].(map[string]any)
+	if input == nil {
+		t.Fatalf("upstream input missing: %s", raw)
+	}
+	if _, has := mu.body["messages"]; has {
+		t.Fatal("top-level messages leaked into native body")
+	}
+	params, _ := mu.body["parameters"].(map[string]any)
+	if params == nil || params["result_format"] != "message" {
+		t.Fatalf("parameters=%v", mu.body["parameters"])
+	}
+	// R1: native deprecated max_tokens never emitted.
+	if params["max_completion_tokens"] != float64(8) {
+		t.Fatalf("max_completion_tokens=%v", params["max_completion_tokens"])
+	}
+	if _, has := params["max_tokens"]; has {
+		t.Fatal("deprecated native max_tokens emitted")
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatalf("client body: %v", err)
+	}
+	if out["id"] != "req-1" || out["model"] != "qwen-max" {
+		t.Fatalf("client id/model: %s", raw)
+	}
+	choices, _ := out["choices"].([]any)
+	if len(choices) != 1 {
+		t.Fatalf("choices=%v", out["choices"])
+	}
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["content"] != "pong" {
+		t.Fatalf("content=%v", msg["content"])
+	}
+	usage := out["usage"].(map[string]any)
+	if usage["prompt_tokens"] != float64(3) || usage["completion_tokens"] != float64(2) || usage["total_tokens"] != float64(5) {
+		t.Fatalf("usage=%v", out["usage"])
+	}
+
+	// Stream: SSE opt-in header + incremental_output; history frame dropped;
+	// client sees synthesized OpenAI SSE with [DONE].
+	raw = post(`{"model":"dashscope-fake","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	if mu.sse != "enable" {
+		t.Fatalf("stream x-dashscope-sse=%q", mu.sse)
+	}
+	params, _ = mu.body["parameters"].(map[string]any)
+	if params == nil || params["incremental_output"] != true {
+		t.Fatalf("stream parameters=%v", mu.body["parameters"])
+	}
+	if strings.Contains(raw, `"content":"hi"`) {
+		t.Fatalf("history frame leaked into client stream: %s", raw)
+	}
+	for _, needle := range []string{`"content":"he"`, `"content":"llo"`, `"finish_reason":"stop"`, `"usage"`, "data: [DONE]"} {
+		if !strings.Contains(raw, needle) {
+			t.Fatalf("missing %s in client stream: %s", needle, raw)
+		}
+	}
+}
+
 func TestMessagesClaudePassthrough(t *testing.T) {
 	var gotKey, gotPath string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
