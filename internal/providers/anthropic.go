@@ -171,18 +171,48 @@ func (AnthropicAdapter) ChunkParser(event any) StreamChunk {
 		return StreamChunk{Raw: event}
 	}
 	switch jsonx.Str(m, "type") {
+	case "content_block_start":
+		// The anthropic content-block index doubles as tool_calls[].index;
+		// tool identity (id/name) must survive the chunk boundary — OpenAI
+		// clients and the internal stream assemblers both expect the
+		// delta.tool_calls LIST shape (compat.go convention).
+		cb := jsonx.AsMap(m["content_block"])
+		idx, _ := jsonx.Int(m, "index")
+		if cb != nil && jsonx.Str(cb, "type") == "tool_use" {
+			return StreamChunk{
+				ToolUse: []any{map[string]any{
+					"index": idx,
+					"id":    jsonx.Str(cb, "id"),
+					"type":  "function",
+					"function": map[string]any{
+						"name":      jsonx.Str(cb, "name"),
+						"arguments": "",
+					},
+				}},
+				Index: idx,
+				Raw:   event,
+			}
+		}
+		return StreamChunk{Raw: event} // text/thinking block opens carry no delta
 	case "content_block_delta":
 		delta := jsonx.AsMap(m["delta"])
 		if delta == nil {
 			delta = map[string]any{}
 		}
 		idx, _ := jsonx.Int(m, "index")
-		return StreamChunk{
-			Text:    jsonx.Str(delta, "text"),
-			ToolUse: toolUseDelta(delta),
-			Index:   idx,
-			Raw:     event,
+		chunk := StreamChunk{Index: idx, Raw: event}
+		switch jsonx.Str(delta, "type") {
+		case "thinking_delta":
+			chunk.Reasoning = jsonx.Str(delta, "thinking")
+		case "input_json_delta":
+			chunk.ToolUse = []any{map[string]any{
+				"index":    idx,
+				"function": map[string]any{"arguments": jsonx.Str(delta, "partial_json")},
+			}}
+		default:
+			chunk.Text = jsonx.Str(delta, "text")
 		}
+		return chunk
 	case "message_delta":
 		delta := jsonx.AsMap(m["delta"])
 		stop := ""
@@ -335,13 +365,6 @@ func flattenContent(content any) (string, []any) {
 		}
 	}
 	return text, tools
-}
-
-func toolUseDelta(delta map[string]any) any {
-	if jsonx.Str(delta, "type") == "input_json_delta" {
-		return delta["partial_json"]
-	}
-	return nil
 }
 
 func mapStopReason(r string) any {

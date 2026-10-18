@@ -24,6 +24,11 @@ func StreamAnthropic(w http.ResponseWriter, client HTTPDoer, p *Prepared, reques
 	return runStream(w, client, p, &streamAnthropic{st: anthropic.NewStream(requestedModel)})
 }
 
+// emitter renders normalized StreamChunks as one SSE wire format.
+//
+// New emitters MUST be pointer types: runStream's model injection special-cases
+// the value-type streamOpenAI (see runStream) and fixes up no other concrete
+// type — a value-type emitter would stream with empty pre-stream fields.
 type emitter interface {
 	preamble(http.ResponseWriter) error
 	emit(http.ResponseWriter, providers.StreamChunk) error
