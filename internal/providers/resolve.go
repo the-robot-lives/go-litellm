@@ -19,6 +19,7 @@ var registry = map[string]Adapter{
 	"ollama":            Ollama,
 	"gemini":            Gemini,
 	"openrouter":        OpenRouter,
+	"dashscope":         DashScope,
 	"openai_compatible": OpenAI,
 }
 
@@ -94,6 +95,13 @@ func endpointProvider(lp map[string]any) string {
 		return "gemini"
 	case strings.Contains(base, "openrouter.ai"):
 		return "openrouter"
+	// Native DashScope hosts (cn + intl). Neither substring matches the other,
+	// but both are listed explicitly. Bare qwen-*/qwq-* models on
+	// compatible-mode api_bases deliberately fall through — no patternProvider
+	// case exists for them, so compatible-mode routing is unchanged.
+	case strings.Contains(base, "dashscope.aliyuncs.com"),
+		strings.Contains(base, "dashscope-intl.aliyuncs.com"):
+		return "dashscope"
 	default:
 		return ""
 	}

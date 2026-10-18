@@ -40,13 +40,13 @@ func entriesWhere(cfg *config.Config, pred func(name, model, base string) bool) 
 
 func TestProductionConfigLoadsVerbatim(t *testing.T) {
 	cfg := prodConfig(t)
-	if len(cfg.ModelList) != 184 {
-		t.Fatalf("entries=%d want 184", len(cfg.ModelList))
+	if len(cfg.ModelList) != 187 {
+		t.Fatalf("entries=%d want 187", len(cfg.ModelList))
 	}
 	rt := router.New(cfg)
 	names := rt.ModelNames()
-	if len(names) != 182 { // whisper-1 and zai/glm-5.3-flash each appear twice
-		t.Fatalf("distinct model names=%d want 182", len(names))
+	if len(names) != 185 { // whisper-1 and zai/glm-5.3-flash each appear twice
+		t.Fatalf("distinct model names=%d want 185", len(names))
 	}
 	if got := rt.Group("whisper-1"); len(got) != 2 {
 		t.Fatalf("whisper-1 deployments=%d want 2 (duplicate model_name must co-exist)", len(got))
@@ -308,7 +308,7 @@ func TestEnvRefsStayEnvRefsWhenVarUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load must tolerate unset env: %v", err)
 	}
-	if len(cfg.ModelList) != 184 {
+	if len(cfg.ModelList) != 187 {
 		t.Fatalf("entries=%d", len(cfg.ModelList))
 	}
 }
