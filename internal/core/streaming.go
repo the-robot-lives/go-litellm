@@ -12,6 +12,7 @@ import (
 	"github.com/noizu-labs/go-litellm/internal/anthropic"
 	"github.com/noizu-labs/go-litellm/internal/errx"
 	"github.com/noizu-labs/go-litellm/internal/providers"
+	"github.com/noizu-labs/go-litellm/internal/responses"
 )
 
 // StreamOpenAI streams a chat completion as OpenAI SSE (`data: …` + `[DONE]`).
@@ -22,6 +23,14 @@ func StreamOpenAI(w http.ResponseWriter, client HTTPDoer, p *Prepared) *errx.Err
 // StreamAnthropic streams OpenAI-family upstream as Anthropic SSE events.
 func StreamAnthropic(w http.ResponseWriter, client HTTPDoer, p *Prepared, requestedModel string) *errx.Error {
 	return runStream(w, client, p, &streamAnthropic{st: anthropic.NewStream(requestedModel)})
+}
+
+// StreamResponses streams an OpenAI-family upstream as Responses API SSE
+// (POST /v1/responses). The emitter is a pointer type per the emitter
+// contract; internal/responses imports only providers/jsonx/errx, so this
+// adds no import cycle.
+func StreamResponses(w http.ResponseWriter, client HTTPDoer, p *Prepared, requestedModel string) *errx.Error {
+	return runStream(w, client, p, &streamResponses{st: responses.NewStream(requestedModel)})
 }
 
 // emitter renders normalized StreamChunks as one SSE wire format.
@@ -97,6 +106,31 @@ func (s *streamAnthropic) emit(w http.ResponseWriter, chunk providers.StreamChun
 func (s *streamAnthropic) closing(w http.ResponseWriter) error {
 	if s.st == nil {
 		s.st = anthropic.NewStream("")
+	}
+	return writeFrames(w, s.st.Close())
+}
+
+type streamResponses struct {
+	st *responses.Stream
+}
+
+func (s *streamResponses) preamble(w http.ResponseWriter) error {
+	if s.st == nil {
+		s.st = responses.NewStream("")
+	}
+	return writeFrames(w, s.st.Preamble())
+}
+
+func (s *streamResponses) emit(w http.ResponseWriter, chunk providers.StreamChunk) error {
+	if s.st == nil {
+		s.st = responses.NewStream("")
+	}
+	return writeFrames(w, s.st.Push(chunk))
+}
+
+func (s *streamResponses) closing(w http.ResponseWriter) error {
+	if s.st == nil {
+		s.st = responses.NewStream("")
 	}
 	return writeFrames(w, s.st.Close())
 }
