@@ -1,6 +1,6 @@
 module github.com/noizu-labs/go-litellm
 
-go 1.22
+go 1.23
 
 require (
 	gopkg.in/yaml.v3 v3.0.1
@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
