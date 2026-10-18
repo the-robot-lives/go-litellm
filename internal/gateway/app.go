@@ -135,6 +135,15 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodPost && (p == "/v1/chat/completions" || p == "/chat/completions"):
 		a.authed(w, r, a.chatCompletions)
+	case r.Method == http.MethodPost && (p == "/v1/responses" || p == "/responses"):
+		// Responses surface (stateless): translate ⇄ chat-completions.
+		// Dispatched before default/passthrough; /v1/responses is in
+		// frontproxy.openaiPaths already.
+		a.authed(w, r, a.responses)
+	case responsesIDRoute(p):
+		// /v1/responses/{id}: stateless — GET is a documented 404, any other
+		// method (DELETE et al) a 405 (audio.go precedent).
+		a.authed(w, r, a.responsesIDHandler)
 	case r.Method == http.MethodPost && (p == "/v1/embeddings" || p == "/embeddings"):
 		a.authed(w, r, a.embeddings)
 	case r.Method == http.MethodGet && (p == "/v1/models" || p == "/models"):

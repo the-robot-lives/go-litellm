@@ -3,6 +3,7 @@
 Dated work log, newest first. One line per landed change, extended in place as it progresses (`→ stage`, `→ main`).
 
 ## 2026-10-19
+- feat(gateway): POST /v1/responses — stateless OpenAI Responses surface (translate ⇄ chat, Responses SSE, tools round-trip)
 - fix(providers): anthropic upstream stream tool-use lost id/name — ChunkParser emits delta.tool_calls list shape
 - feat(providers): DashScope native outbound adapter (text-generation, incremental_output SSE)
 
